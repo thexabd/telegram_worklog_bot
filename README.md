@@ -75,10 +75,15 @@ The flow:
    - `owner/repo#42` — for repos under a different owner
    - Bare `42` — uses your last-used repo (or `GITHUB_REPO` fallback)
    - Tap one of the inline **recent repo** buttons to lock the repo for this flow, then send the bare number
-2. Pick a date — type `today`, `yesterday`, `YYYY-MM-DD`, or tap **Use today**.
-3. Send the number of minutes.
-4. Send remarks (free text).
-5. Tap **Confirm** on the summary.
+2. Choose: log on this issue, or open a `Worklog <date>` **sub-issue** under it.
+3. Pick a date — type `today`, `yesterday`, `YYYY-MM-DD`, or tap **Use today**.
+4. Send the number of minutes.
+5. Send remarks (free text).
+6. Tap **Confirm** on the summary.
+
+If you chose **sub-issue**, on confirm the bot creates a new issue titled `Worklog <date>` in the parent's repo, links it via the GitHub sub-issues relationship, adds it to the project, writes the four worklog fields to the sub-issue's project item, and closes the sub-issue as completed. Sub-issue creation is deferred until confirm, so cancelling at any point leaves no debris.
+
+The target issue (sub-issue if created, otherwise the parent) is also auto-assigned to `blg-abdullah`. `addAssigneesToAssignable` is used so existing assignees on the parent are preserved.
 
 The bot remembers your last 5 repos per Telegram user (in memory) and surfaces them as quick-pick buttons on the next `/log`. The worklog owner is always set to `blg-abdullah`. If the issue isn't already in the project, it's added automatically when you confirm.
 

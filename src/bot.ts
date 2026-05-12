@@ -47,6 +47,9 @@ export async function startBot(): Promise<void> {
   const remarksField = findField(project.fields, FIELD_REMARKS);
   const ownerField = findField(project.fields, FIELD_OWNER);
 
+  const assigneeUserId = await gh.getUserId(OWNER_VALUE);
+  console.log(`Assignee resolved: ${OWNER_VALUE} (${assigneeUserId}).`);
+
   const bot = new Telegraf(token);
 
   bot.start((ctx) =>
@@ -111,6 +114,31 @@ export async function startBot(): Promise<void> {
     );
   });
 
+  bot.action(/^subissue:(yes|no)$/, async (ctx) => {
+    const userId = ctx.from!.id;
+    const state = getState(userId);
+    if (state.step !== 'awaiting_subissue_choice' || !state.issue) {
+      return ctx.answerCbQuery();
+    }
+    const create = ctx.match[1] === 'yes';
+    setState(userId, { createSubIssue: create, step: 'awaiting_date' });
+    await ctx.answerCbQuery();
+    try {
+      await ctx.editMessageText(
+        `Issue: #${state.issue.number} ${state.issue.title}\n` +
+          `Sub-issue: ${create ? 'yes' : 'no'}`,
+      );
+    } catch {
+      // ignore — message may not be editable
+    }
+    await ctx.reply(
+      `Which date? (today / yesterday / YYYY-MM-DD)`,
+      Markup.inlineKeyboard([
+        Markup.button.callback('Use today', 'use_today'),
+      ]),
+    );
+  });
+
   bot.action('use_today', async (ctx) => {
     const userId = ctx.from!.id;
     if (getState(userId).step !== 'awaiting_date') {
@@ -135,11 +163,31 @@ export async function startBot(): Promise<void> {
     } catch {
       // best-effort cleanup
     }
-    await ctx.reply('Logging…');
+    await ctx.reply(state.createSubIssue ? 'Creating sub-issue and logging…' : 'Logging…');
 
     try {
+      let targetIssueNumber = state.issue.number;
+      let targetIssueUrl = state.issue.url;
+      let targetIssueTitle = state.issue.title;
+      let targetIssueId = state.issue.nodeId;
       let itemId = state.issue.projectItemId;
-      if (!itemId) {
+
+      if (state.createSubIssue) {
+        const subTitle = `Worklog ${state.date}`;
+        const subBody =
+          `**Date:** ${state.date}\n` +
+          `**Minutes:** ${state.minutes}\n` +
+          `**Remarks:** ${state.remarks}\n` +
+          `**Owner:** ${OWNER_VALUE}\n` +
+          `**Parent:** ${state.issue.url}`;
+        const sub = await gh.createIssue(state.issue.repoId, subTitle, subBody);
+        await gh.addSubIssue(state.issue.nodeId, sub.id);
+        itemId = await gh.addIssueToProject(project.id, sub.id);
+        targetIssueId = sub.id;
+        targetIssueNumber = sub.number;
+        targetIssueUrl = sub.url;
+        targetIssueTitle = sub.title;
+      } else if (!itemId) {
         itemId = await gh.addIssueToProject(project.id, state.issue.nodeId);
       }
 
@@ -158,8 +206,18 @@ export async function startBot(): Promise<void> {
       );
       await gh.updateTextField(project.id, itemId, ownerField.id, OWNER_VALUE);
 
+      await gh.addAssignees(targetIssueId, [assigneeUserId]);
+
+      if (state.createSubIssue) {
+        await gh.closeIssue(targetIssueId, 'COMPLETED');
+      }
+
+      const link = `[#${targetIssueNumber} ${escapeMd(targetIssueTitle)}](${targetIssueUrl})`;
+      const subLine = state.createSubIssue
+        ? `\nSub-issue of [#${state.issue.number}](${state.issue.url}), closed.`
+        : '';
       await ctx.reply(
-        `Logged ${state.minutes}m on [#${state.issue.number} ${escapeMd(state.issue.title)}](${state.issue.url})\n` +
+        `Logged ${state.minutes}m on ${link}${subLine}\n` +
           `Date: ${state.date}\n` +
           `Remarks: ${state.remarks}\n` +
           `Owner: ${OWNER_VALUE}`,
@@ -212,7 +270,7 @@ export async function startBot(): Promise<void> {
             rememberRepo(userId, ref.repo);
           }
           setState(userId, {
-            step: 'awaiting_date',
+            step: 'awaiting_subissue_choice',
             issue: {
               owner: ref.owner,
               repo: ref.repo,
@@ -220,6 +278,7 @@ export async function startBot(): Promise<void> {
               title: issue.title,
               url: issue.url,
               nodeId: issue.id,
+              repoId: issue.repositoryId,
               projectItemId: projectItem?.id ?? '',
             },
           });
@@ -228,9 +287,11 @@ export async function startBot(): Promise<void> {
             : `\n(Will be added to "${project.title}" when you confirm.)`;
           await ctx.reply(
             `Issue: #${issue.number} ${issue.title}${note}\n\n` +
-              `Which date? (today / yesterday / YYYY-MM-DD)`,
+              `Create a sub-issue for this worklog?\n` +
+              `(Yes = open + close a "Worklog <date>" sub-issue under this one. No = log directly on this issue.)`,
             Markup.inlineKeyboard([
-              Markup.button.callback('Use today', 'use_today'),
+              Markup.button.callback('Yes — sub-issue', 'subissue:yes'),
+              Markup.button.callback('No — this issue', 'subissue:no'),
             ]),
           );
         } catch (err: any) {
@@ -271,9 +332,12 @@ export async function startBot(): Promise<void> {
           remarks,
           step: 'awaiting_confirmation',
         });
+        const subLine = next.createSubIssue
+          ? `\nSub-issue: yes — will create & close "Worklog ${next.date}" under #${next.issue!.number}`
+          : '';
         const summary =
           `Confirm worklog:\n` +
-          `Issue: #${next.issue!.number} ${next.issue!.title}\n` +
+          `Issue: #${next.issue!.number} ${next.issue!.title}${subLine}\n` +
           `Date: ${next.date}\n` +
           `Minutes: ${next.minutes}\n` +
           `Remarks: ${next.remarks}\n` +

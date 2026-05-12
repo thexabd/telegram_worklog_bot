@@ -1,6 +1,7 @@
 export type FlowStep =
   | 'idle'
   | 'awaiting_issue'
+  | 'awaiting_subissue_choice'
   | 'awaiting_date'
   | 'awaiting_minutes'
   | 'awaiting_remarks'
@@ -13,6 +14,7 @@ export interface IssueRef {
   title: string;
   url: string;
   nodeId: string;
+  repoId: string;
   projectItemId: string;
 }
 
@@ -20,6 +22,7 @@ export interface ConversationState {
   step: FlowStep;
   selectedRepo?: string;
   issue?: IssueRef;
+  createSubIssue?: boolean;
   date?: string;
   minutes?: number;
   remarks?: string;

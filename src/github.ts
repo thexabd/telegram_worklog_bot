@@ -24,7 +24,15 @@ export interface IssueData {
   title: string;
   url: string;
   number: number;
+  repositoryId: string;
   projectItems: ProjectItemRef[];
+}
+
+export interface CreatedIssue {
+  id: string;
+  number: number;
+  url: string;
+  title: string;
 }
 
 export class GitHubClient {
@@ -95,6 +103,7 @@ export class GitHubClient {
     const res: any = await this.gql(
       `query($owner: String!, $repo: String!, $number: Int!) {
         repository(owner: $owner, name: $repo) {
+          id
           issue(number: $number) {
             id title url number
             projectItems(first: 20) {
@@ -105,8 +114,9 @@ export class GitHubClient {
       }`,
       { owner, repo, number },
     );
-    const issue = res?.repository?.issue;
-    if (!issue) {
+    const repository = res?.repository;
+    const issue = repository?.issue;
+    if (!repository || !issue) {
       throw new Error(`Issue #${number} not found in ${owner}/${repo}.`);
     }
     return {
@@ -114,12 +124,84 @@ export class GitHubClient {
       title: issue.title,
       url: issue.url,
       number: issue.number,
+      repositoryId: repository.id,
       projectItems: (issue.projectItems?.nodes ?? []).map((n: any) => ({
         id: n.id,
         projectId: n.project.id,
         projectNumber: n.project.number,
       })),
     };
+  }
+
+  async createIssue(
+    repositoryId: string,
+    title: string,
+    body?: string,
+  ): Promise<CreatedIssue> {
+    const res: any = await this.gql(
+      `mutation($repositoryId: ID!, $title: String!, $body: String) {
+        createIssue(input: { repositoryId: $repositoryId, title: $title, body: $body }) {
+          issue { id number url title }
+        }
+      }`,
+      { repositoryId, title, body: body ?? null },
+    );
+    const issue = res.createIssue.issue;
+    return {
+      id: issue.id,
+      number: issue.number,
+      url: issue.url,
+      title: issue.title,
+    };
+  }
+
+  async getUserId(login: string): Promise<string> {
+    const res: any = await this.gql(
+      `query($login: String!) { user(login: $login) { id } }`,
+      { login },
+    );
+    const id = res?.user?.id;
+    if (!id) throw new Error(`GitHub user "${login}" not found.`);
+    return id;
+  }
+
+  async addAssignees(
+    assignableId: string,
+    assigneeIds: string[],
+  ): Promise<void> {
+    await this.gql(
+      `mutation($assignableId: ID!, $assigneeIds: [ID!]!) {
+        addAssigneesToAssignable(input: { assignableId: $assignableId, assigneeIds: $assigneeIds }) {
+          assignable { ... on Issue { id } }
+        }
+      }`,
+      { assignableId, assigneeIds },
+    );
+  }
+
+  async addSubIssue(parentIssueId: string, subIssueId: string): Promise<void> {
+    await this.gql(
+      `mutation($issueId: ID!, $subIssueId: ID!) {
+        addSubIssue(input: { issueId: $issueId, subIssueId: $subIssueId }) {
+          issue { id }
+        }
+      }`,
+      { issueId: parentIssueId, subIssueId },
+    );
+  }
+
+  async closeIssue(
+    issueId: string,
+    stateReason: 'COMPLETED' | 'NOT_PLANNED' | 'DUPLICATE' = 'COMPLETED',
+  ): Promise<void> {
+    await this.gql(
+      `mutation($issueId: ID!, $stateReason: IssueClosedStateReason) {
+        closeIssue(input: { issueId: $issueId, stateReason: $stateReason }) {
+          issue { id state }
+        }
+      }`,
+      { issueId, stateReason },
+    );
   }
 
   async addIssueToProject(
