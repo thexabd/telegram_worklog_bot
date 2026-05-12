@@ -55,7 +55,7 @@ The bot expects the project to have these custom fields (names must match exactl
 | `Worklog (Date)` | Date |
 | `Worklog (mins)` | Number |
 | `Worklog (Remarks)` | Text |
-| `Worklog Owner (blg-xxxx)` | Text |
+| `Worklog Owner` | Text |
 
 The bot looks up field IDs by name at startup, so it works across any project that has these fields. If any field is missing, the bot fails fast with a list of available field names.
 
