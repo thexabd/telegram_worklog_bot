@@ -9,7 +9,8 @@ The bot walks you through a short conversation — issue → date → minutes �
 ```sh
 npm install
 cp .env.example .env
-# fill in TELEGRAM_BOT_TOKEN, GITHUB_TOKEN, GITHUB_PROJECT_NUMBER, etc.
+npm run gen-key                   # copy output into ENCRYPTION_KEY
+# also fill TELEGRAM_BOT_TOKEN, GITHUB_OWNER, GITHUB_PROJECT_NUMBER
 npm run dev
 ```
 
@@ -18,10 +19,13 @@ npm run dev
 | Var | Required | Notes |
 | --- | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | yes | From [@BotFather](https://t.me/BotFather) |
-| `GITHUB_TOKEN` | yes | Personal access token (see scopes below) |
-| `GITHUB_OWNER` | yes | User or org that owns the project (default `blg-abdullah`). Used as the implicit owner for `repo#123` shorthand. |
+| `ENCRYPTION_KEY` | yes | 32-byte hex (64 chars) for AES-256-GCM encryption of stored PATs. Generate with `npm run gen-key`. **Lose this and every saved PAT becomes unrecoverable** — users will need to `/login` again. |
+| `GITHUB_OWNER` | yes | User or org that owns the project. Also the implicit owner for `repo#123` shorthand. |
 | `GITHUB_PROJECT_NUMBER` | yes | Project number from the project URL |
 | `GITHUB_REPO` | no | Optional fallback repo for bare-number input (`123`) before any repo has been used in this session |
+| `SQLITE_PATH` | no | Path for the per-user PAT database. Default `data/users.db`. |
+
+The bot no longer needs a server-wide `GITHUB_TOKEN` — each user provides their own PAT via `/login`. PATs are encrypted with AES-256-GCM (per-record IV + auth tag) and stored in SQLite.
 
 ## GitHub token scopes
 
@@ -64,10 +68,20 @@ The bot looks up field IDs by name at startup, so it works across any project th
 In Telegram:
 
 - `/start` — welcome message
+- `/login` — register or update your GitHub PAT (required before `/log`)
 - `/log` — start a worklog flow
 - `/cancel` — cancel the current flow
 
-The flow:
+### `/login` flow
+
+1. Send `/login`.
+2. Send your PAT in the next message. The bot deletes it from chat immediately.
+3. Bot validates against `viewer { login }` and asks: **GitHub username found: xyz. Is this you?** — tap **Yes** or **No**.
+4. On Yes, your Telegram id + username, GitHub login, and the encrypted PAT (single base64 blob: `iv || authTag || ciphertext`) are upserted into SQLite. The GitHub user node ID needed for assignment is fetched on demand via `viewer { id }` at confirm time.
+
+After login the `Worklog Owner` field and the issue assignee both default to your GitHub login.
+
+### `/log` flow:
 
 1. Send the issue. Multi-repo supported — any of these work:
    - Full URL: `https://github.com/blg-abdullah/frontend/issues/42`
@@ -83,9 +97,9 @@ The flow:
 
 If you chose **sub-issue**, on confirm the bot creates a new issue titled `Worklog <date>` in the parent's repo, links it via the GitHub sub-issues relationship, adds it to the project, writes the four worklog fields to the sub-issue's project item, and closes the sub-issue as completed. Sub-issue creation is deferred until confirm, so cancelling at any point leaves no debris.
 
-The target issue (sub-issue if created, otherwise the parent) is also auto-assigned to `blg-abdullah`. `addAssigneesToAssignable` is used so existing assignees on the parent are preserved.
+The target issue (sub-issue if created, otherwise the parent) is also auto-assigned to the logged-in user via `addAssigneesToAssignable`, which preserves existing assignees on the parent.
 
-The bot remembers your last 5 repos per Telegram user (in memory) and surfaces them as quick-pick buttons on the next `/log`. The worklog owner is always set to `blg-abdullah`. If the issue isn't already in the project, it's added automatically when you confirm.
+The bot remembers your last 5 repos per Telegram user (in memory) and surfaces them as quick-pick buttons on the next `/log`. If the issue isn't already in the project, it's added automatically when you confirm.
 
 ## Project layout
 
@@ -94,9 +108,12 @@ src/
   bot.ts       # telegraf setup, command handlers, conversation flow
   github.ts    # @octokit/graphql client and field discovery
   state.ts     # in-memory per-user conversation state
+  db.ts        # better-sqlite3 user store (encrypted PATs)
+  crypto.ts    # AES-256-GCM encrypt/decrypt
   utils.ts     # date and issue-input parsing
 index.ts       # entry point
+data/users.db  # SQLite (gitignored)
 .env.example
 ```
 
-State is held in a `Map` keyed by Telegram user ID — restart the bot and any in-progress flows are lost.
+Conversation state is held in a `Map` keyed by Telegram user ID — restart the bot and any in-progress flows are lost. Per-user PATs persist in SQLite.
