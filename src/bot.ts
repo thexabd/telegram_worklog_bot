@@ -218,9 +218,9 @@ export async function startBot(): Promise<void> {
         : '';
       await ctx.reply(
         `Logged ${state.minutes}m on ${link}${subLine}\n` +
-          `Date: ${state.date}\n` +
-          `Remarks: ${state.remarks}\n` +
-          `Owner: ${OWNER_VALUE}`,
+          `Date: ${escapeMd(state.date!)}\n` +
+          `Remarks: ${escapeMd(state.remarks!)}\n` +
+          `Owner: ${escapeMd(OWNER_VALUE)}`,
         {
           parse_mode: 'Markdown',
           link_preview_options: { is_disabled: true },
