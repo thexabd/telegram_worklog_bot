@@ -1,7 +1,5 @@
-import { Telegraf, Markup, Context } from 'telegraf';
+import { Telegraf, Markup } from 'telegraf';
 import { GitHubClient, ProjectInfo, findField } from './github';
-import { decrypt, encrypt, initCrypto } from './crypto';
-import { getUser, initDb, upsertUser, UserRecord } from './db';
 import {
   getRecentRepos,
   getState,
@@ -14,9 +12,8 @@ import { formatDate, parseDate, parseIssueInput } from './utils';
 const FIELD_DATE = 'Worklog (Date)';
 const FIELD_MINS = 'Worklog (mins)';
 const FIELD_REMARKS = 'Worklog (Remarks)';
-const FIELD_OWNER = 'Worklog Owner';
-
-const DB_PATH = process.env.SQLITE_PATH || 'data/users.db';
+const FIELD_OWNER = 'Worklog Owner (blg-xxxx)';
+const OWNER_VALUE = 'blg-abdullah';
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -25,7 +22,8 @@ function requireEnv(name: string): string {
 }
 
 export async function startBot(): Promise<void> {
-  const tgToken = requireEnv('TELEGRAM_BOT_TOKEN');
+  const token = requireEnv('TELEGRAM_BOT_TOKEN');
+  const githubToken = requireEnv('GITHUB_TOKEN');
   const owner = requireEnv('GITHUB_OWNER');
   const projectNumber = Number(requireEnv('GITHUB_PROJECT_NUMBER'));
   const defaultRepo = process.env.GITHUB_REPO || '';
@@ -34,48 +32,31 @@ export async function startBot(): Promise<void> {
     throw new Error('GITHUB_PROJECT_NUMBER must be a positive integer.');
   }
 
-  initCrypto(requireEnv('ENCRYPTION_KEY'));
-  initDb(DB_PATH);
+  const gh = new GitHubClient(githubToken);
 
-  let projectCache: ProjectInfo | null = null;
-
-  async function loadProject(client: GitHubClient): Promise<ProjectInfo> {
-    if (projectCache) return projectCache;
-    const proj = await client.getProject(owner, projectNumber);
-    for (const name of [FIELD_DATE, FIELD_MINS, FIELD_REMARKS, FIELD_OWNER]) {
-      findField(proj.fields, name);
-    }
-    projectCache = proj;
-    console.log(
-      `Project loaded: "${proj.title}" (#${proj.number}). Fields verified.`,
-    );
-    return proj;
+  const project: ProjectInfo = await gh.getProject(owner, projectNumber);
+  for (const name of [FIELD_DATE, FIELD_MINS, FIELD_REMARKS, FIELD_OWNER]) {
+    findField(project.fields, name);
   }
+  console.log(
+    `Connected to project "${project.title}" (#${project.number}). Required fields verified.`,
+  );
 
-  function clientForUser(user: UserRecord): GitHubClient {
-    const token = decrypt(user.encrypted_pat);
-    return new GitHubClient(token);
-  }
+  const dateField = findField(project.fields, FIELD_DATE);
+  const minsField = findField(project.fields, FIELD_MINS);
+  const remarksField = findField(project.fields, FIELD_REMARKS);
+  const ownerField = findField(project.fields, FIELD_OWNER);
 
-  async function requireLogin(ctx: Context): Promise<UserRecord | null> {
-    const user = getUser(ctx.from!.id);
-    if (!user) {
-      await ctx.reply(
-        'You need to register first. Send /login and follow the prompts.',
-      );
-      return null;
-    }
-    return user;
-  }
+  const assigneeUserId = await gh.getUserId(OWNER_VALUE);
+  console.log(`Assignee resolved: ${OWNER_VALUE} (${assigneeUserId}).`);
 
-  const bot = new Telegraf(tgToken);
+  const bot = new Telegraf(token);
 
   bot.start((ctx) =>
     ctx.reply(
       `Hi! I help you log time on GitHub Project issues.\n\n` +
-        `First time? Run /login to register your GitHub PAT.\n\n` +
+        `Connected project: ${project.title} (#${project.number})\n\n` +
         `Commands:\n` +
-        `/login — register or update your GitHub PAT\n` +
         `/log — start a new worklog\n` +
         `/cancel — cancel the current flow`,
     ),
@@ -86,36 +67,12 @@ export async function startBot(): Promise<void> {
     return ctx.reply('Cancelled.');
   });
 
-  bot.command('login', async (ctx) => {
-    setState(ctx.from!.id, {
-      step: 'awaiting_pat',
-      pendingLogin: undefined,
-      selectedRepo: undefined,
-      issue: undefined,
-      createSubIssue: undefined,
-      date: undefined,
-      minutes: undefined,
-      remarks: undefined,
-    });
-    await ctx.reply(
-      'Send me your GitHub Personal Access Token.\n\n' +
-        'Required scopes: `repo`, `project`.\n' +
-        'Generate one at https://github.com/settings/tokens\n\n' +
-        '_Your message will be deleted immediately. The PAT is stored encrypted (AES-256-GCM)._',
-      { parse_mode: 'Markdown', link_preview_options: { is_disabled: true } },
-    );
-  });
-
   bot.command('log', async (ctx) => {
-    const user = await requireLogin(ctx);
-    if (!user) return;
-
     const userId = ctx.from!.id;
     setState(userId, {
       step: 'awaiting_issue',
       selectedRepo: undefined,
       issue: undefined,
-      createSubIssue: undefined,
       date: undefined,
       minutes: undefined,
       remarks: undefined,
@@ -141,40 +98,6 @@ export async function startBot(): Promise<void> {
       };
     }
     await ctx.reply(lines.join('\n'), extra);
-  });
-
-  bot.action(/^login:(yes|no)$/, async (ctx) => {
-    const userId = ctx.from!.id;
-    const state = getState(userId);
-    if (state.step !== 'awaiting_login_confirm' || !state.pendingLogin) {
-      return ctx.answerCbQuery();
-    }
-    const choice = ctx.match[1];
-    await ctx.answerCbQuery();
-    try {
-      await ctx.editMessageReplyMarkup(undefined);
-    } catch {
-      // ignore
-    }
-
-    if (choice === 'no') {
-      resetState(userId);
-      await ctx.reply('Cancelled. Run /login again to retry.');
-      return;
-    }
-
-    const { token, login } = state.pendingLogin;
-    upsertUser({
-      id: userId,
-      telegram_username: ctx.from!.username ?? null,
-      github_login: login,
-      encrypted_pat: encrypt(token),
-    });
-    resetState(userId);
-    await ctx.reply(
-      `Logged in as *${login}*. Use /log to start logging time.`,
-      { parse_mode: 'Markdown' },
-    );
   });
 
   bot.action(/^pick_repo:(.+)$/, async (ctx) => {
@@ -234,29 +157,15 @@ export async function startBot(): Promise<void> {
     if (state.step !== 'awaiting_confirmation' || !state.issue) {
       return ctx.answerCbQuery();
     }
-    const user = await requireLogin(ctx);
-    if (!user) {
-      resetState(userId);
-      return ctx.answerCbQuery();
-    }
     await ctx.answerCbQuery();
     try {
       await ctx.editMessageReplyMarkup(undefined);
     } catch {
       // best-effort cleanup
     }
-    await ctx.reply(
-      state.createSubIssue ? 'Creating sub-issue and logging…' : 'Logging…',
-    );
+    await ctx.reply(state.createSubIssue ? 'Creating sub-issue and logging…' : 'Logging…');
 
     try {
-      const gh = clientForUser(user);
-      const project = await loadProject(gh);
-      const dateField = findField(project.fields, FIELD_DATE);
-      const minsField = findField(project.fields, FIELD_MINS);
-      const remarksField = findField(project.fields, FIELD_REMARKS);
-      const ownerField = findField(project.fields, FIELD_OWNER);
-
       let targetIssueNumber = state.issue.number;
       let targetIssueUrl = state.issue.url;
       let targetIssueTitle = state.issue.title;
@@ -269,7 +178,7 @@ export async function startBot(): Promise<void> {
           `**Date:** ${state.date}\n` +
           `**Minutes:** ${state.minutes}\n` +
           `**Remarks:** ${state.remarks}\n` +
-          `**Owner:** ${user.github_login}\n` +
+          `**Owner:** ${OWNER_VALUE}\n` +
           `**Parent:** ${state.issue.url}`;
         const sub = await gh.createIssue(state.issue.repoId, subTitle, subBody);
         await gh.addSubIssue(state.issue.nodeId, sub.id);
@@ -295,15 +204,9 @@ export async function startBot(): Promise<void> {
         remarksField.id,
         state.remarks!,
       );
-      await gh.updateTextField(
-        project.id,
-        itemId,
-        ownerField.id,
-        user.github_login,
-      );
+      await gh.updateTextField(project.id, itemId, ownerField.id, OWNER_VALUE);
 
-      const viewer = await gh.getViewer();
-      await gh.addAssignees(targetIssueId, [viewer.id]);
+      await gh.addAssignees(targetIssueId, [assigneeUserId]);
 
       if (state.createSubIssue) {
         await gh.closeIssue(targetIssueId, 'COMPLETED');
@@ -317,7 +220,7 @@ export async function startBot(): Promise<void> {
         `Logged ${state.minutes}m on ${link}${subLine}\n` +
           `Date: ${state.date}\n` +
           `Remarks: ${state.remarks}\n` +
-          `Owner: ${user.github_login}`,
+          `Owner: ${OWNER_VALUE}`,
         {
           parse_mode: 'Markdown',
           link_preview_options: { is_disabled: true },
@@ -347,53 +250,6 @@ export async function startBot(): Promise<void> {
     if (text.startsWith('/')) return;
     const state = getState(userId);
 
-    if (state.step === 'awaiting_pat') {
-      const pat = text.trim();
-      // Delete the user's PAT message immediately so it doesn't linger in chat history.
-      try {
-        await ctx.deleteMessage(ctx.message.message_id);
-      } catch {
-        // best-effort — bot may lack delete permission in groups
-      }
-
-      if (!pat) {
-        return ctx.reply('PAT was empty. Run /login again.');
-      }
-
-      try {
-        const tempClient = new GitHubClient(pat);
-        const viewer = await tempClient.getViewer();
-        setState(userId, {
-          step: 'awaiting_login_confirm',
-          pendingLogin: { token: pat, login: viewer.login },
-        });
-        await ctx.reply(
-          `GitHub username found: *${escapeMd(viewer.login)}*. Is this you?`,
-          {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: 'Yes', callback_data: 'login:yes' },
-                  { text: 'No', callback_data: 'login:no' },
-                ],
-              ],
-            },
-          },
-        );
-      } catch (err: any) {
-        resetState(userId);
-        await ctx.reply(
-          `Could not validate PAT: ${err?.message ?? String(err)}\nRun /login to try again.`,
-        );
-      }
-      return;
-    }
-
-    // Everything below requires login.
-    const user = await requireLogin(ctx);
-    if (!user) return;
-
     switch (state.step) {
       case 'awaiting_issue': {
         const fallbackRepo =
@@ -406,8 +262,6 @@ export async function startBot(): Promise<void> {
           );
         }
         try {
-          const gh = clientForUser(user);
-          const project = await loadProject(gh);
           const issue = await gh.getIssue(ref.owner, ref.repo, ref.number);
           const projectItem = issue.projectItems.find(
             (p) => p.projectId === project.id,
@@ -487,7 +341,7 @@ export async function startBot(): Promise<void> {
           `Date: ${next.date}\n` +
           `Minutes: ${next.minutes}\n` +
           `Remarks: ${next.remarks}\n` +
-          `Owner: ${user.github_login}`;
+          `Owner: ${OWNER_VALUE}`;
         return ctx.reply(
           summary,
           Markup.inlineKeyboard([

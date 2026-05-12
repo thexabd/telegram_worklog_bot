@@ -155,14 +155,6 @@ export class GitHubClient {
     };
   }
 
-  async getViewer(): Promise<{ login: string; id: string }> {
-    const res: any = await this.gql(`query { viewer { login id } }`);
-    if (!res?.viewer?.login || !res?.viewer?.id) {
-      throw new Error('Could not resolve viewer from token.');
-    }
-    return { login: res.viewer.login, id: res.viewer.id };
-  }
-
   async getUserId(login: string): Promise<string> {
     const res: any = await this.gql(
       `query($login: String!) { user(login: $login) { id } }`,

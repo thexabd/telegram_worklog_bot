@@ -7,17 +7,14 @@
   "scripts": {
     "dev": "tsx watch index.ts",
     "start": "tsx index.ts",
-    "typecheck": "tsc --noEmit",
-    "gen-key": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@octokit/graphql": "^7.1.0",
-    "better-sqlite3": "^11.5.0",
     "dotenv": "^16.4.5",
     "telegraf": "^4.16.3"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^20.11.30",
     "tsx": "^4.7.1",
     "typescript": "^5.4.2"

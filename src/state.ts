@@ -1,18 +1,11 @@
 export type FlowStep =
   | 'idle'
-  | 'awaiting_pat'
-  | 'awaiting_login_confirm'
   | 'awaiting_issue'
   | 'awaiting_subissue_choice'
   | 'awaiting_date'
   | 'awaiting_minutes'
   | 'awaiting_remarks'
   | 'awaiting_confirmation';
-
-export interface PendingLogin {
-  token: string;
-  login: string;
-}
 
 export interface IssueRef {
   owner: string;
@@ -27,7 +20,6 @@ export interface IssueRef {
 
 export interface ConversationState {
   step: FlowStep;
-  pendingLogin?: PendingLogin;
   selectedRepo?: string;
   issue?: IssueRef;
   createSubIssue?: boolean;
