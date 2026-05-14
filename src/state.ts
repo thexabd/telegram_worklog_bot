@@ -29,6 +29,7 @@ export interface ConversationState {
   minutes?: number;
   remarks?: string;
   rangeStart?: string;
+  rangeMode?: 'list' | 'count480';
 }
 
 const states = new Map<number, ConversationState>();

@@ -68,6 +68,7 @@ export async function startBot(): Promise<void> {
         `/week — minutes for this week, grouped by day\n` +
         `/month — minutes for this month, grouped by date\n` +
         `/range — minutes for a custom date range (prompts for start & end)\n` +
+        `/fulldays — count days with ≥480 mins in a custom range\n` +
         `/cancel — cancel the current flow`,
     ),
   );
@@ -167,9 +168,20 @@ export async function startBot(): Promise<void> {
     setState(userId, {
       step: 'awaiting_range_start',
       rangeStart: undefined,
+      rangeMode: 'list',
+    });
+    return ctx.reply('Start date? (today / yesterday / YYYY-MM-DD)');
+  });
+
+  bot.command('fulldays', async (ctx) => {
+    const userId = ctx.from!.id;
+    setState(userId, {
+      step: 'awaiting_range_start',
+      rangeStart: undefined,
+      rangeMode: 'count480',
     });
     return ctx.reply(
-      'Start date? (today / yesterday / YYYY-MM-DD)',
+      'Count days with ≥480 mins logged.\nStart date? (today / yesterday / YYYY-MM-DD)',
     );
   });
 
@@ -185,6 +197,38 @@ export async function startBot(): Promise<void> {
         end,
       );
       await ctx.reply(formatEntries(mine, 'multi'), replyOpts);
+    } catch (err: any) {
+      await ctx.reply(`Failed: ${err?.message ?? String(err)}`);
+    }
+  }
+
+  async function runFullDaysCount(ctx: any, start: string, end: string) {
+    await ctx.reply(`Counting full days in ${start} → ${end}…`);
+    try {
+      const mine = await gh.listWorklogsForAssignee(
+        project.id,
+        OWNER_VALUE,
+        owner,
+        fieldNames,
+        start,
+        end,
+      );
+      const totals = new Map<string, number>();
+      for (const e of mine) {
+        totals.set(e.date, (totals.get(e.date) ?? 0) + e.minutes);
+      }
+      const sorted = [...totals.entries()].sort(([a], [b]) =>
+        a.localeCompare(b),
+      );
+      const full = sorted.filter(([, m]) => m >= 480);
+      const partial = sorted.filter(([, m]) => m > 0 && m < 480);
+      const lines = [
+        `Full days: ${full.length}`,
+        '',
+        `Partial days: ${partial.length}`,
+      ];
+      for (const [d, m] of partial) lines.push(`${d}: ${m} mins`);
+      await ctx.reply(lines.join('\n'));
     } catch (err: any) {
       await ctx.reply(`Failed: ${err?.message ?? String(err)}`);
     }
@@ -467,8 +511,13 @@ export async function startBot(): Promise<void> {
             `End date ${end} is before start ${start}. Send a date on or after ${start}.`,
           );
         }
+        const mode = state.rangeMode ?? 'list';
         resetState(userId);
-        await runRangeQuery(ctx, start, end);
+        if (mode === 'count480') {
+          await runFullDaysCount(ctx, start, end);
+        } else {
+          await runRangeQuery(ctx, start, end);
+        }
         return;
       }
 
