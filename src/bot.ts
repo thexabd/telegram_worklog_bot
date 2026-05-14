@@ -65,7 +65,7 @@ export async function startBot(): Promise<void> {
         `Commands:\n` +
         `/log — start a new worklog\n` +
         `/day [date] — total minutes for a day (default today)\n` +
-        `/week — minutes for this week, grouped by day\n` +
+        `/week — minutes for this week, grouped by date\n` +
         `/month — minutes for this month, grouped by date\n` +
         `/range — minutes for a custom date range (prompts for start & end)\n` +
         `/fulldays — count days with ≥480 mins in a custom range\n` +

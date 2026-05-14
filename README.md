@@ -65,9 +65,16 @@ In Telegram:
 
 - `/start` — welcome message
 - `/log` — start a worklog flow
+- `/day [date]` — total minutes logged for a day (default today). Accepts `today`, `yesterday`, or `YYYY-MM-DD`.
+- `/week` — current week (Mon–Sun), grouped by day with per-day totals
+- `/month` — current calendar month, grouped by date with per-day totals
+- `/range` — prompts for a start and end date, then reports entries grouped by day
+- `/fulldays` — prompts for a start and end date, then reports the count of days with ≥480 mins logged and lists partial days (>0, <480 mins)
 - `/cancel` — cancel the current flow
 
-The flow:
+Summary commands query GitHub issue search filtered by assignee (`blg-abdullah`) plus the project's `Worklog (Date)` / `Worklog (mins)` field values. Issue numbers in the output are Markdown links to the GitHub issue.
+
+The log flow:
 
 1. Send the issue. Multi-repo supported — any of these work:
    - Full URL: `https://github.com/blg-abdullah/frontend/issues/42`
