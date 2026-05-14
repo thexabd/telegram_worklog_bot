@@ -58,39 +58,41 @@ export class GitHubClient {
       id
       title
       number
-      fields(first: 50) {
+      fields(first: 30) {
         nodes {
           ... on ProjectV2FieldCommon { id name dataType }
         }
       }
     `;
 
-    let project: any = null;
-    try {
-      const res: any = await this.gql(
-        `query($owner: String!, $number: Int!) {
-          organization(login: $owner) { projectV2(number: $number) { ${fragment} } }
-        }`,
-        { owner, number: projectNumber },
-      );
-      project = res?.organization?.projectV2 ?? null;
-    } catch {
-      // owner may be a user, not an org — fall through
-    }
+    const tryOwner = async (
+      rootField: 'organization' | 'user',
+    ): Promise<any> => {
+      try {
+        const res: any = await this.gql(
+          `query($owner: String!, $number: Int!) {
+            ${rootField}(login: $owner) { projectV2(number: $number) { ${fragment} } }
+          }`,
+          { owner, number: projectNumber },
+        );
+        return res?.[rootField]?.projectV2 ?? null;
+      } catch (err: any) {
+        const onlyNotFound =
+          Array.isArray(err?.errors) &&
+          err.errors.every((e: any) => e?.type === 'NOT_FOUND');
+        const partial = err?.data?.[rootField]?.projectV2 ?? null;
+        if (partial) return partial;
+        if (onlyNotFound) return null;
+        throw err;
+      }
+    };
 
-    if (!project) {
-      const res: any = await this.gql(
-        `query($owner: String!, $number: Int!) {
-          user(login: $owner) { projectV2(number: $number) { ${fragment} } }
-        }`,
-        { owner, number: projectNumber },
-      );
-      project = res?.user?.projectV2 ?? null;
-    }
+    let project: any = await tryOwner('organization');
+    if (!project) project = await tryOwner('user');
 
     if (!project) {
       throw new Error(
-        `Project #${projectNumber} not found for owner "${owner}". Check GITHUB_OWNER, GITHUB_PROJECT_NUMBER, and that your token has the "project" scope.`,
+        `Project #${projectNumber} not found for owner "${owner}". Check GITHUB_OWNER, GITHUB_PROJECT_NUMBER, and that your token has the "project" scope (plus "read:org" if the owner is an organization).`,
       );
     }
 
