@@ -18,6 +18,7 @@ npm run dev
 | Var | Required | Notes |
 | --- | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | yes | From [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_ALLOWED_USERNAMES` | yes | Comma-separated list of Telegram usernames allowed to use the bot (with or without leading `@`, case-insensitive). Updates from anyone else are silently dropped. |
 | `GITHUB_TOKEN` | yes | Personal access token (see scopes below) |
 | `GITHUB_OWNER` | yes | User or org that owns the project (default `blg-abdullah`). Used as the implicit owner for `repo#123` shorthand. |
 | `GITHUB_PROJECT_NUMBER` | yes | Project number from the project URL |

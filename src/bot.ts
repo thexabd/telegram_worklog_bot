@@ -33,6 +33,17 @@ export async function startBot(): Promise<void> {
   const owner = requireEnv('GITHUB_OWNER');
   const projectNumber = Number(requireEnv('GITHUB_PROJECT_NUMBER'));
   const defaultRepo = process.env.GITHUB_REPO || '';
+  const allowedUsernames = new Set(
+    requireEnv('TELEGRAM_ALLOWED_USERNAMES')
+      .split(',')
+      .map((u) => u.trim().replace(/^@/, '').toLowerCase())
+      .filter(Boolean),
+  );
+  if (allowedUsernames.size === 0) {
+    throw new Error(
+      'TELEGRAM_ALLOWED_USERNAMES must list at least one username.',
+    );
+  }
 
   if (!Number.isInteger(projectNumber) || projectNumber <= 0) {
     throw new Error('GITHUB_PROJECT_NUMBER must be a positive integer.');
@@ -57,6 +68,17 @@ export async function startBot(): Promise<void> {
   console.log(`Assignee resolved: ${OWNER_VALUE} (${assigneeUserId}).`);
 
   const bot = new Telegraf(token);
+
+  bot.use(async (ctx, next) => {
+    const username = ctx.from?.username?.toLowerCase();
+    if (!username || !allowedUsernames.has(username)) {
+      console.warn(
+        `Rejected update from unauthorized user: id=${ctx.from?.id} username=${ctx.from?.username ?? '(none)'}`,
+      );
+      return;
+    }
+    return next();
+  });
 
   bot.start((ctx) =>
     ctx.reply(
