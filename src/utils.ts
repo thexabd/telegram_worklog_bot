@@ -28,6 +28,42 @@ export function parseDate(input: string): string | null {
   return formatDate(d);
 }
 
+export function getWeekRange(today: Date = new Date()): {
+  start: string;
+  end: string;
+} {
+  const d = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  // ISO week: Monday = 0, Sunday = 6
+  const offset = (d.getDay() + 6) % 7;
+  const start = new Date(d);
+  start.setDate(d.getDate() - offset);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return { start: formatDate(start), end: formatDate(end) };
+}
+
+export function getMonthRange(today: Date = new Date()): {
+  start: string;
+  end: string;
+} {
+  const start = new Date(today.getFullYear(), today.getMonth(), 1);
+  const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  return { start: formatDate(start), end: formatDate(end) };
+}
+
+export function formatMinutes(mins: number): string {
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}h` : `${h}h${m}m`;
+}
+
+export function weekdayShort(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getDay()];
+}
+
 export interface IssueInputRef {
   owner: string;
   repo: string;

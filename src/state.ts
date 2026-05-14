@@ -5,7 +5,9 @@ export type FlowStep =
   | 'awaiting_date'
   | 'awaiting_minutes'
   | 'awaiting_remarks'
-  | 'awaiting_confirmation';
+  | 'awaiting_confirmation'
+  | 'awaiting_range_start'
+  | 'awaiting_range_end';
 
 export interface IssueRef {
   owner: string;
@@ -26,6 +28,7 @@ export interface ConversationState {
   date?: string;
   minutes?: number;
   remarks?: string;
+  rangeStart?: string;
 }
 
 const states = new Map<number, ConversationState>();

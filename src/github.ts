@@ -35,6 +35,15 @@ export interface CreatedIssue {
   title: string;
 }
 
+export interface WorklogEntry {
+  date: string;
+  minutes: number;
+  owner: string | null;
+  issueNumber: number;
+  issueTitle: string;
+  issueUrl: string;
+}
+
 export class GitHubClient {
   private gql: typeof graphql;
 
@@ -251,6 +260,90 @@ export class GitHubClient {
       }`,
       { projectId, itemId, fieldId, value },
     );
+  }
+
+  async listWorklogsForAssignee(
+    projectId: string,
+    assignee: string,
+    owner: string,
+    fieldNames: { date: string; minutes: string },
+    dateFrom?: string,
+    dateTo?: string,
+  ): Promise<WorklogEntry[]> {
+    const entries: WorklogEntry[] = [];
+    let cursor: string | null = null;
+    const q = `assignee:${assignee} is:issue user:${owner}`;
+    do {
+      const res: any = await this.gql(
+        `query($q: String!, $cursor: String) {
+          search(query: $q, type: ISSUE, first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              ... on Issue {
+                number
+                title
+                url
+                projectItems(first: 10) {
+                  nodes {
+                    project { id }
+                    fieldValues(first: 20) {
+                      nodes {
+                        __typename
+                        ... on ProjectV2ItemFieldDateValue {
+                          date
+                          field { ... on ProjectV2FieldCommon { name } }
+                        }
+                        ... on ProjectV2ItemFieldNumberValue {
+                          number
+                          field { ... on ProjectV2FieldCommon { name } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }`,
+        { q, cursor },
+      );
+      const search = res?.search;
+      const nodes: any[] = search?.nodes ?? [];
+      for (const issue of nodes) {
+        const items: any[] = issue?.projectItems?.nodes ?? [];
+        const item = items.find((it) => it?.project?.id === projectId);
+        if (!item) continue;
+        let date: string | null = null;
+        let minutes: number | null = null;
+        for (const fv of item?.fieldValues?.nodes ?? []) {
+          const name = fv?.field?.name;
+          if (!name) continue;
+          if (name === fieldNames.date && typeof fv.date === 'string') {
+            date = fv.date;
+          } else if (
+            name === fieldNames.minutes &&
+            typeof fv.number === 'number'
+          ) {
+            minutes = fv.number;
+          }
+        }
+        if (!date || typeof minutes !== 'number') continue;
+        if (dateFrom && date < dateFrom) continue;
+        if (dateTo && date > dateTo) continue;
+        entries.push({
+          date,
+          minutes,
+          owner: assignee,
+          issueNumber: issue.number,
+          issueTitle: issue.title,
+          issueUrl: issue.url,
+        });
+      }
+      cursor = search?.pageInfo?.hasNextPage
+        ? search.pageInfo.endCursor
+        : null;
+    } while (cursor);
+    return entries;
   }
 
   async updateTextField(

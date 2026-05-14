@@ -7,7 +7,13 @@ import {
   resetState,
   setState,
 } from './state';
-import { formatDate, parseDate, parseIssueInput } from './utils';
+import {
+  formatDate,
+  getMonthRange,
+  getWeekRange,
+  parseDate,
+  parseIssueInput,
+} from './utils';
 
 const FIELD_DATE = 'Worklog (Date)';
 const FIELD_MINS = 'Worklog (mins)';
@@ -58,6 +64,10 @@ export async function startBot(): Promise<void> {
         `Connected project: ${project.title} (#${project.number})\n\n` +
         `Commands:\n` +
         `/log — start a new worklog\n` +
+        `/day [date] — total minutes for a day (default today)\n` +
+        `/week — minutes for this week, grouped by day\n` +
+        `/month — minutes for this month, grouped by date\n` +
+        `/range — minutes for a custom date range (prompts for start & end)\n` +
         `/cancel — cancel the current flow`,
     ),
   );
@@ -65,6 +75,137 @@ export async function startBot(): Promise<void> {
   bot.command('cancel', (ctx) => {
     resetState(ctx.from!.id);
     return ctx.reply('Cancelled.');
+  });
+
+  const fieldNames = { date: FIELD_DATE, minutes: FIELD_MINS };
+
+  type Entry = Awaited<ReturnType<typeof gh.listWorklogsForAssignee>>[number];
+
+  function formatEntries(
+    entries: Entry[],
+    mode: 'day' | 'multi',
+  ): string {
+    if (!entries.length) return 'No entries.\nTotal minutes logged: 0 mins';
+    const byDate = new Map<string, Entry[]>();
+    for (const e of entries) {
+      const list = byDate.get(e.date) ?? [];
+      list.push(e);
+      byDate.set(e.date, list);
+    }
+    const dates = [...byDate.keys()].sort();
+    const lines: string[] = [];
+    let grand = 0;
+    dates.forEach((d, idx) => {
+      if (mode === 'multi' && idx > 0) lines.push('');
+      lines.push(d);
+      let dayTotal = 0;
+      for (const e of byDate.get(d)!) {
+        lines.push(`[#${e.issueNumber}](${e.issueUrl}): ${e.minutes} mins`);
+        dayTotal += e.minutes;
+      }
+      grand += dayTotal;
+      if (mode === 'multi') {
+        lines.push(`Total minutes logged: ${dayTotal} mins`);
+      }
+    });
+    if (mode === 'day') {
+      lines.push(`Total minutes logged: ${grand} mins`);
+    }
+    return lines.join('\n');
+  }
+
+  const replyOpts = {
+    parse_mode: 'Markdown',
+    link_preview_options: { is_disabled: true },
+  } as const;
+
+  bot.command('day', async (ctx) => {
+    const arg = ctx.message.text.split(/\s+/).slice(1).join(' ').trim();
+    const date = arg ? parseDate(arg) : formatDate(new Date());
+    if (!date) {
+      return ctx.reply(
+        'Invalid date. Try `/day`, `/day today`, `/day yesterday`, or `/day YYYY-MM-DD`.',
+        { parse_mode: 'Markdown' },
+      );
+    }
+    await ctx.reply(`Fetching worklogs for ${date}…`);
+    try {
+      const mine = await gh.listWorklogsForAssignee(
+        project.id,
+        OWNER_VALUE,
+        owner,
+        fieldNames,
+        date,
+        date,
+      );
+      await ctx.reply(formatEntries(mine, 'day'), replyOpts);
+    } catch (err: any) {
+      await ctx.reply(`Failed: ${err?.message ?? String(err)}`);
+    }
+  });
+
+  bot.command('week', async (ctx) => {
+    const { start, end } = getWeekRange();
+    await ctx.reply(`Fetching worklogs for week ${start} → ${end}…`);
+    try {
+      const mine = await gh.listWorklogsForAssignee(
+        project.id,
+        OWNER_VALUE,
+        owner,
+        fieldNames,
+        start,
+        end,
+      );
+      await ctx.reply(formatEntries(mine, 'multi'), replyOpts);
+    } catch (err: any) {
+      await ctx.reply(`Failed: ${err?.message ?? String(err)}`);
+    }
+  });
+
+  bot.command('range', async (ctx) => {
+    const userId = ctx.from!.id;
+    setState(userId, {
+      step: 'awaiting_range_start',
+      rangeStart: undefined,
+    });
+    return ctx.reply(
+      'Start date? (today / yesterday / YYYY-MM-DD)',
+    );
+  });
+
+  async function runRangeQuery(ctx: any, start: string, end: string) {
+    await ctx.reply(`Fetching worklogs for ${start} → ${end}…`);
+    try {
+      const mine = await gh.listWorklogsForAssignee(
+        project.id,
+        OWNER_VALUE,
+        owner,
+        fieldNames,
+        start,
+        end,
+      );
+      await ctx.reply(formatEntries(mine, 'multi'), replyOpts);
+    } catch (err: any) {
+      await ctx.reply(`Failed: ${err?.message ?? String(err)}`);
+    }
+  }
+
+  bot.command('month', async (ctx) => {
+    const { start, end } = getMonthRange();
+    await ctx.reply(`Fetching worklogs for ${start.slice(0, 7)}…`);
+    try {
+      const mine = await gh.listWorklogsForAssignee(
+        project.id,
+        OWNER_VALUE,
+        owner,
+        fieldNames,
+        start,
+        end,
+      );
+      await ctx.reply(formatEntries(mine, 'multi'), replyOpts);
+    } catch (err: any) {
+      await ctx.reply(`Failed: ${err?.message ?? String(err)}`);
+    }
   });
 
   bot.command('log', async (ctx) => {
@@ -297,6 +438,37 @@ export async function startBot(): Promise<void> {
         } catch (err: any) {
           await ctx.reply(`Error: ${err?.message ?? String(err)}`);
         }
+        return;
+      }
+
+      case 'awaiting_range_start': {
+        const date = parseDate(text);
+        if (!date) {
+          return ctx.reply(
+            'Invalid date. Try `today`, `yesterday`, or `YYYY-MM-DD`.',
+            { parse_mode: 'Markdown' },
+          );
+        }
+        setState(userId, { rangeStart: date, step: 'awaiting_range_end' });
+        return ctx.reply(`Start: ${date}\nEnd date? (today / yesterday / YYYY-MM-DD)`);
+      }
+
+      case 'awaiting_range_end': {
+        const end = parseDate(text);
+        if (!end) {
+          return ctx.reply(
+            'Invalid date. Try `today`, `yesterday`, or `YYYY-MM-DD`.',
+            { parse_mode: 'Markdown' },
+          );
+        }
+        const start = state.rangeStart!;
+        if (end < start) {
+          return ctx.reply(
+            `End date ${end} is before start ${start}. Send a date on or after ${start}.`,
+          );
+        }
+        resetState(userId);
+        await runRangeQuery(ctx, start, end);
         return;
       }
 
