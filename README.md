@@ -23,6 +23,9 @@ npm run dev
 | `GITHUB_OWNER` | yes | User or org that owns the project (default `blg-abdullah`). Used as the implicit owner for `repo#123` shorthand. |
 | `GITHUB_PROJECT_NUMBER` | yes | Project number from the project URL |
 | `GITHUB_REPO` | no | Optional fallback repo for bare-number input (`123`) before any repo has been used in this session |
+| `WEBHOOK_URL` | no (deploy only) | Public HTTPS URL of the deployed service (e.g. `https://my-bot.onrender.com`). When set, the bot runs in webhook mode and binds an HTTP server to `$PORT`. Leave blank for local long-polling. |
+| `WEBHOOK_SECRET` | no | Overrides the secret path segment used for the webhook. Defaults to a hash of `TELEGRAM_BOT_TOKEN`. Anyone with this value can POST fake updates. |
+| `PORT` | no | Provided by the host (Render sets this). Defaults to `3000` locally. |
 
 ## GitHub token scopes
 
@@ -108,3 +111,35 @@ index.ts       # entry point
 ```
 
 State is held in a `Map` keyed by Telegram user ID — restart the bot and any in-progress flows are lost.
+
+## Deploying on Render
+
+The bot supports two modes:
+
+- **Local dev** — long-polling. Just `npm run dev`. Leave `WEBHOOK_URL` unset.
+- **Production** — Telegram webhooks over HTTPS. The bot starts an HTTP server bound to `$PORT` with a `/health` route and a secret webhook path.
+
+### One-click via blueprint
+
+A `render.yaml` is included. From the Render dashboard, choose **New → Blueprint** and point it at this repo. Render will create a Web Service with the right build/start commands and prompt you to fill the env vars listed in the blueprint (all marked `sync: false`).
+
+After the first deploy:
+
+1. Copy the service URL (e.g. `https://time-logging-bot.onrender.com`).
+2. Set `WEBHOOK_URL` to that URL in the service's environment.
+3. Trigger a redeploy. On boot the bot calls `setWebhook` with `${WEBHOOK_URL}/tg/<secret>` and Telegram starts delivering updates.
+
+### Manual setup
+
+If you'd rather click through the dashboard:
+
+- **Type**: Web Service
+- **Runtime**: Node
+- **Build command**: `npm install`
+- **Start command**: `npm start`
+- **Health check path**: `/health`
+- **Env vars**: same as the table above. `WEBHOOK_URL` must be the service's public URL.
+
+### Free tier caveat
+
+Render's free Web Services spin down after ~15 min of inactivity. With webhooks this is mostly fine — Telegram retries undelivered updates, so the next message wakes the service (with a cold-start delay of a few seconds). For a personal worklog bot this is usually acceptable. If you need always-on, upgrade the plan or switch to a Background Worker.

@@ -1,3 +1,5 @@
+import * as http from 'node:http';
+import * as crypto from 'node:crypto';
 import { Telegraf, Markup } from 'telegraf';
 import { GitHubClient, ProjectInfo, findField } from './github';
 import {
@@ -603,9 +605,49 @@ export async function startBot(): Promise<void> {
     console.error(`Bot error for update ${ctx.updateType}:`, err);
   });
 
-  // Telegraf's launch() resolves only when the bot stops, so don't await it.
+  const webhookUrl = process.env.WEBHOOK_URL?.trim().replace(/\/$/, '');
+  if (webhookUrl) {
+    const port = Number(process.env.PORT || 3000);
+    if (!Number.isInteger(port) || port <= 0) {
+      throw new Error('PORT must be a positive integer.');
+    }
+    const secretPath =
+      '/tg/' +
+      (process.env.WEBHOOK_SECRET?.trim() ||
+        crypto.createHash('sha256').update(token).digest('hex').slice(0, 32));
+
+    const webhookCallback = bot.webhookCallback(secretPath);
+    const server = http.createServer((req, res) => {
+      if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('ok');
+        return;
+      }
+      webhookCallback(req, res);
+    });
+
+    await new Promise<void>((resolve) => server.listen(port, resolve));
+    console.log(`HTTP server listening on :${port}`);
+
+    await bot.telegram.setWebhook(`${webhookUrl}${secretPath}`, {
+      drop_pending_updates: false,
+    });
+    console.log(`Webhook set to ${webhookUrl}${secretPath}`);
+
+    const shutdown = (signal: string) => {
+      console.log(`Received ${signal}, shutting down…`);
+      server.close();
+      bot.stop(signal);
+    };
+    process.once('SIGINT', () => shutdown('SIGINT'));
+    process.once('SIGTERM', () => shutdown('SIGTERM'));
+    return;
+  }
+
+  // Local dev: long-polling. launch() resolves only when the bot stops.
+  await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
   bot.launch().catch((err) => console.error('Bot launch error:', err));
-  console.log('Bot started.');
+  console.log('Bot started in polling mode.');
 
   process.once('SIGINT', () => bot.stop('SIGINT'));
   process.once('SIGTERM', () => bot.stop('SIGTERM'));
