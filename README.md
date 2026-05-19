@@ -135,8 +135,8 @@ If you'd rather click through the dashboard:
 
 - **Type**: Web Service
 - **Runtime**: Node
-- **Build command**: `npm install`
-- **Start command**: `npm start`
+- **Build command**: `npm install && npm run build`
+- **Start command**: `npm start` (runs `node dist/index.js`)
 - **Health check path**: `/health`
 - **Env vars**: same as the table above. `WEBHOOK_URL` must be the service's public URL.
 
